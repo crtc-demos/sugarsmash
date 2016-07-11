@@ -10,11 +10,20 @@ static uint16_t lfsr = 0xace1u;
 #define V_TILES 6
 #define H_TILES 12
 #define WRAP_TILES 18
+#define FIRST_NONCOLOUR 24
 #define SWIRL_TILE 24
 #define CAGE_TILE 25
 #define COLOURBOMB_TILE 26
 #define EXPLOSION_TILE 27
 #define BG_TILES 28
+
+#define SWIRL_MASK 0x80
+#define CAGE_MASK  0x40
+#define BG_MASK    0x3f
+
+#define EMPTY_TILE 31
+
+//#define CHEATMODE 1
 
 static char *const screenbase = (char *) 0x4300;
 
@@ -22,7 +31,8 @@ static char *const screenbase = (char *) 0x4300;
 
 #define WRITE_BYTE(A, V) (*(volatile char *) (A) = (V))
 
-unsigned int rand (void)
+static unsigned int
+rand (void)
 {
   uint16_t bit;        /* Must be 16bit to allow bit<<15 later in the code */
 
@@ -200,7 +210,7 @@ screen_start (void *addr)
 
 extern char *tiles[];
 
-void
+static void
 render_tile (char *addr, char tileno)
 {
   char x, y, row;
@@ -259,7 +269,8 @@ render_tile (char *addr, char tileno)
     }
 }
 
-void render_solid_tile (char *addr, char tileno)
+static void
+render_solid_tile (char *addr, char tileno)
 {
   char x, y, row;
   char *tileptr = tiles[tileno];
@@ -279,7 +290,7 @@ void render_solid_tile (char *addr, char tileno)
     }
 }
 
-char rng (void)
+static char rng (void)
 {
   char rnum;
   
@@ -290,9 +301,10 @@ char rng (void)
   return rnum;
 }
 
-char playfield[9][9];
+static char playfield[9][9];
 
-char background[9][9] =
+#if 1
+static char background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -304,6 +316,28 @@ char background[9][9] =
     { 1, 1, 0, 0, 0, 0, 0, 1, 1 },
     { 2, 2, 2, 2, 2, 2, 2, 2, 2 }
   };
+#else
+
+#define S SWIRL_MASK
+#define C CAGE_MASK
+
+static char background[9][9] =
+  {
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, S, S, S, 0, 0, 0 },
+    { 0, 0, 0, S, 3, S, 0, 0, 0 },
+    { 0, 0, 0, S, S, S, 0, 0, 0 },
+    { C, 0, 0, 0, 0, 0, 0, 0, C },
+    { C, 0, 0, 0, 0, 0, 0, 0, C },
+    { C, C, 0, 0, 0, 0, 0, C, C }
+  };
+
+#undef C
+#undef H
+
+#endif
 
 static void
 hline (char sx, char ex, char y, char andcol, char orcol)
@@ -374,8 +408,9 @@ static void
 redraw_tile (char x, char y)
 {
   char *tileat = &screenbase[y * ROWLENGTH * 3 + x * 8 * 8];
-  render_solid_tile (tileat, BG_TILES + background[y][x]);
-  render_tile (tileat, playfield[y][x] & 63);
+  render_solid_tile (tileat, BG_TILES + (background[y][x] & BG_MASK));
+  if ((playfield[y][x] & 127) != EMPTY_TILE)
+    render_tile (tileat, playfield[y][x] & 127);
 }
 
 static void
@@ -386,6 +421,128 @@ render_tile_xy (char x, char y, char tileno)
 }
 
 static char
+candy_match (char lhs, char rhs)
+{
+  lhs &= 127;
+  rhs &= 127;
+
+  if (lhs < FIRST_NONCOLOUR || rhs < FIRST_NONCOLOUR)
+    return (lhs % 6) == (rhs % 6);
+
+  return 0;
+}
+
+static void
+explode_a_colour (char c)
+{
+  char x, y;
+  for (y = 0; y < 9; y++)
+    for (x = 0; x < 9; x++)
+      {
+        if (candy_match (playfield[y][x], c))
+          playfield[y][x] |= 128;
+      }
+}
+
+static void trigger (char, char, char);
+
+static char
+stripes_match (char oldx, char oldy, char newx, char newy)
+{
+  char lhs = playfield[oldy][oldx], rhs = playfield[newy][newx];
+  char i;
+
+  if (lhs >= V_TILES && lhs < FIRST_NONCOLOUR
+      && rhs >= V_TILES && rhs < FIRST_NONCOLOUR)
+    {
+      for (i = 0; i < 9; i++)
+        {
+          trigger (i, oldy, lhs);
+          trigger (oldx, i, lhs);
+          trigger (i, newy, rhs);
+          trigger (newx, i, rhs);
+        }
+      return 1;
+    }
+
+  return 0;
+}
+
+static char
+colourbomb_match (char *lhsp, char *rhsp)
+{
+  char lhs = *lhsp, rhs = *rhsp;
+
+  if (lhs == COLOURBOMB_TILE)
+    {
+      if (rhs < FIRST_NONCOLOUR)
+        {
+          *lhsp |= 128;
+          explode_a_colour (rhs);
+        }
+
+      return 1;
+    }
+  else if (rhs == COLOURBOMB_TILE)
+    {
+      if (lhs < FIRST_NONCOLOUR)
+        {
+          *rhsp |= 128;
+          explode_a_colour (lhs);
+        }
+
+      return 1;
+    }
+
+  return 0;
+}
+
+// Terrifyingly recursive!
+
+static void
+trigger (char x, char y, char eq)
+{
+  char trigger_char = playfield[y][x] & 127, i, j;
+
+  playfield[y][x] |= 128;
+
+  // We're exploding a colourbomb!
+  if (trigger_char == COLOURBOMB_TILE)
+    {
+      explode_a_colour (eq);
+      return;
+    }
+
+  if (trigger_char >= H_TILES && trigger_char < H_TILES + 6)
+    for (i = 0; i < 9; i++)
+      {
+        if (!(playfield[y][i] & 128))
+          trigger (i, y, eq);
+      }
+
+  if (trigger_char >= V_TILES && trigger_char < V_TILES + 6)
+    for (i = 0; i < 9; i++)
+      {
+        if (!(playfield[i][x] & 128))
+          trigger (x, i, eq);
+      }
+
+  if (trigger_char >= WRAP_TILES && trigger_char < WRAP_TILES + 6)
+    {
+      char l = x > 0 ? x - 1 : 0;
+      char t = y > 0 ? y - 1 : 0;
+      char r = x < 8 ? x + 1 : 8;
+      char b = y < 8 ? y + 1 : 8;
+      for (i = l; i <= r; i++)
+        for (j = t; j <= b; j++)
+          {
+            if (!(playfield[j][i] & 128))
+              trigger (i, j, eq);
+          }
+    }
+}
+
+static char
 horizontal_match (char x, char y, char eq, char fix_matches)
 {
   char c;
@@ -393,7 +550,7 @@ horizontal_match (char x, char y, char eq, char fix_matches)
   
   for (c = x + 1; c < 9; c++)
     {
-      if (playfield[y][c] == eq)
+      if (candy_match (playfield[y][c], eq))
         right = c;
       else
         break;
@@ -401,7 +558,7 @@ horizontal_match (char x, char y, char eq, char fix_matches)
 
   for (c = x - 1; c != 255; c--)
     {
-      if (playfield[y][c] == eq)
+      if (candy_match (playfield[y][c], eq))
         left = c;
       else
         break;
@@ -412,7 +569,7 @@ horizontal_match (char x, char y, char eq, char fix_matches)
   if (fix_matches && matching >= 3)
     {
       for (x = left; x <= right; x++)
-        playfield[y][x] |= 128;
+        trigger (x, y, eq);
     }
 
   return matching;
@@ -426,7 +583,7 @@ vertical_match (char x, char y, char eq, char fix_matches)
   
   for (c = y + 1; c < 9; c++)
     {
-      if (playfield[c][x] == eq)
+      if (candy_match (playfield[c][x], eq))
         bottom = c;
       else
         break;
@@ -434,7 +591,7 @@ vertical_match (char x, char y, char eq, char fix_matches)
 
   for (c = y - 1; c != 255; c--)
     {
-      if (playfield[c][x] == eq)
+      if (candy_match (playfield[c][x], eq))
         top = c;
       else
         break;
@@ -445,7 +602,7 @@ vertical_match (char x, char y, char eq, char fix_matches)
   if (fix_matches && matching >= 3)
     {
       for (y = top; y <= bottom; y++)
-        playfield[y][x] |= 128;
+        trigger (x, y, eq);
     }
 
   return matching;
@@ -488,7 +645,7 @@ show_explosions (void)
       }
 }
 
-void pause (int amt)
+static void pause (int amt)
 {
   long wait;
   for (wait = 0; wait < amt; wait++)
@@ -500,27 +657,44 @@ shuffle_explosions (void)
 {
   char x, y, y2;
   char some_explosions = 0;
-  
+
+  for (y = 0; y < 9; y++)
+    for (x = 0; x < 9; x++)
+      {
+        if (playfield[y][x] & 128)
+          {
+            playfield[y][x] = EMPTY_TILE;
+
+            // Remove jelly (like a boss).
+            if (background[y][x] > 0 && background[y][x] <= 2)
+              background[y][x]--;
+          }
+      }
+
   do
     {
       some_explosions = 0;
       for (y = 0; y < 9; y++)
-        for (x = 0; x < 9; x++)
-          {
-            if (playfield[y][x] & 128)
-              {
-                if (y > 0)
-                  {
-                    playfield[y][x] = playfield[y - 1][x] & 127;
-                    playfield[y - 1][x] |= 128;
-                  }
-                else
-                  playfield[0][x] = rng ();
+        {
+          char use_y = 8 - y;
+          for (x = 0; x < 9; x++)
+            {
+              if (playfield[use_y][x] == EMPTY_TILE)
+                {
+                  if (use_y > 0)
+                    {
+                      playfield[use_y][x] = playfield[use_y - 1][x];
+                      playfield[use_y - 1][x] = EMPTY_TILE;
+                    }
+                  else
+                    playfield[0][x] = rng ();
 
-                redraw_tile (x, y);
-                some_explosions = 1;
-              }
-          }
+                  redraw_tile (x, use_y);
+
+                  some_explosions = 1;
+                }
+            }
+        }
     }
   while (some_explosions);
 }
@@ -540,27 +714,54 @@ selected_state (char selected)
     }
 }
 
+static void
+make_special (char base, char *x)
+{
+  char candy = *x;
+  candy &= 127;
+  if (candy < 6)
+    candy += base;
+  *x = candy;
+}
+
+static void
+special_candy (char *position, char h_score, char v_score)
+{
+  if (h_score >= 5 || v_score >= 5)
+    *position = COLOURBOMB_TILE;
+  else if (h_score >= 3 && v_score >= 3)
+    make_special (WRAP_TILES, position);
+  else if (h_score >= 4)
+    make_special (H_TILES, position);
+  else if (v_score >= 4)
+    make_special (V_TILES, position);
+}
+
 static char
 successful_move (char oldx, char oldy, char newx, char newy)
 {
   char selected_tile;
-  char success = 0;
+  char h_score = 0, v_score = 0, success = 0;
 
   do_swap (oldx, oldy, newx, newy);
 
-  selected_tile = playfield[newy][newx];
-  if (horizontal_match (newx, newy, selected_tile, 1) >= 3)
-    success = 1;
+  success = stripes_match (oldx, oldy, newx, newy);
 
-  if (vertical_match (newx, newy, selected_tile, 1) >= 3)
-    success = 1;
+  success |= colourbomb_match (&playfield[newy][newx], &playfield[oldy][oldx]);
+
+  selected_tile = playfield[newy][newx];
+  h_score = horizontal_match (newx, newy, selected_tile, 1);
+  v_score = vertical_match (newx, newy, selected_tile, 1);
+
+  success |= h_score >= 3 || v_score >= 3;
+  special_candy (&playfield[newy][newx], h_score, v_score);
 
   selected_tile = playfield[oldy][oldx];
-  if (horizontal_match (oldx, oldy, selected_tile, 1) >= 3)
-    success = 1;
+  h_score = horizontal_match (oldx, oldy, selected_tile, 1);
+  v_score = vertical_match (oldx, oldy, selected_tile, 1);
 
-  if (vertical_match (oldx, oldy, selected_tile, 1) >= 3)
-    success = 1;
+  success |= h_score >= 3 || v_score >= 3;
+  special_candy (&playfield[oldy][oldx], h_score, v_score);
 
   if (success)
     return 1;
@@ -589,6 +790,14 @@ retrigger (void)
   return success;
 }
 
+void
+do_explosions (void)
+{
+  show_explosions ();
+  pause (20000);
+  shuffle_explosions ();
+  reset_playfield_marks ();
+}
 
 //static unsigned rowmultab[32];
 
@@ -642,7 +851,12 @@ int main (void)
         char thistile;
         do
           {
-            thistile = rng ();
+            if (background[y][x] & SWIRL_MASK)
+              thistile = SWIRL_TILE;
+            else if ((background[y][x] & BG_MASK) == 3)
+              thistile = EMPTY_TILE;
+            else
+              thistile = rng ();
             playfield[y][x] = thistile;
           }
         while (horizontal_match (x, y, thistile, 0) >= 3
@@ -673,10 +887,13 @@ int main (void)
 
   while (1)
     {
+      char readchar;
       oldcx = cursx;
       oldcy = cursy;
 
-      switch (osrdch ())
+      readchar = osrdch ();
+
+      switch (readchar)
         {
         case 136: /* left */
           if (cursx > 0)
@@ -694,6 +911,30 @@ int main (void)
           if (cursy > 0)
             cursy--;
           break;
+#ifdef CHEATMODE
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case 'h':
+        case 'v':
+        case 'w':
+          box (cursx, cursy, 0x3f, 0x00);
+          if (readchar == 'h')
+            make_special (H_TILES, &playfield[y][x]);
+          else if (readchar == 'v')
+            make_special (V_TILES, &playfield[y][x]);
+          else if (readchar == 'w')
+            make_special (WRAP_TILES, &playfield[y][x]);
+          else
+            playfield[cursy][cursx] = readchar - '1';
+          redraw_tile (cursx, cursy);
+          box (cursx, cursy, 0xff, 0xc0);
+          break;
+          
+#endif
         case 13:
           selected = !selected;
           selected_state (selected);
@@ -710,18 +951,10 @@ int main (void)
               {
                 show_swap (oldcx, oldcy, cursx, cursy);
 
-                show_explosions ();
-                pause (20000);
-                shuffle_explosions ();
-                reset_playfield_marks ();
+                do_explosions ();
 
                 while (retrigger ())
-                  {
-                    show_explosions ();
-                    pause (20000);
-                    shuffle_explosions ();
-                    reset_playfield_marks ();
-                  }
+                  do_explosions ();
 
                 /* OR with 8.  */
                 //gfx_gcol (1, 8);
