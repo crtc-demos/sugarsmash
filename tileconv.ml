@@ -108,6 +108,22 @@ let convert_tile img tx ty =
   Printf.printf "total: %d bytes\n" tot;
   tot,*) encoded
 
+let convert_run fo img tx ty runlength =
+  for x = 0 to runlength - 1 do
+    for y = 0 to 7 do
+      let lx = x * 2 in
+      let rx = lx + 1 in
+      let lpix = Rgba32.get img (tx + lx) (ty + y)
+      and rpix = Rgba32.get img (tx + rx) (ty + y) in
+      let lbits = colour_enc lpix
+      and rbits = colour_enc rpix in
+      match lbits, rbits with
+        Some l, Some r ->
+          Printf.fprintf fo "\t.byte %d\n" (mix l r)
+      | _ -> failwith "Too transparent."
+    done
+  done
+
 let tiles =
   [(* Plain.  *)
    0, 0;
@@ -225,8 +241,24 @@ let _ =
   List.iteri
     (fun i _ -> Printf.fprintf fo "\t.word blk%d\n" i)
     enclist;
+  Printf.fprintf fo "\t.word digits\n";
+  Printf.fprintf fo "\t.word jelly\n";
+  Printf.fprintf fo "\t.word score\n";
+  Printf.fprintf fo "\t.word moves\n";
   List.iteri
     (fun i encblock ->
       write_block fo i encblock)
     enclist;
+  Printf.fprintf fo "digits:\n";
+  for y = 0 to 2 do
+    for x = 0 to 3 do
+      convert_run fo cinv (9 * 16 + x * 4) (24 + y * 8) 2
+    done
+  done;
+  Printf.fprintf fo "jelly:\n";
+  convert_run fo cinv (9 * 16) (24 * 3) 8;
+  Printf.fprintf fo "score:\n";
+  convert_run fo cinv (9 * 16) (24 * 3 + 8) 10;
+  Printf.fprintf fo "moves:\n";
+  convert_run fo cinv (9 * 16) (24 * 3 + 8 * 2) 11;
   close_out fo

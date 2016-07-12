@@ -18,15 +18,20 @@ static uint16_t lfsr = 0xace1u;
 #define EXPLOSION_TILE 27
 #define BG_TILES 28
 
+#define DIGITS_TEXT 32
+#define JELLY_TEXT 33
+#define SCORE_TEXT 34
+#define MOVES_TEXT 35
+
 #define SWIRL_MASK 0x80
 #define CAGE_MASK  0x40
 #define BG_MASK    0x3f
 
 #define EMPTY_TILE 31
 
-#define CHEATMODE 1
+//#define CHEATMODE 1
 
-static char *const screenbase = (char *) 0x4300;
+static char *const screenbase = (char *) 0x4100;
 
 #ifdef TILES_LINKED_IN
 extern char *tiles[];
@@ -41,6 +46,8 @@ char **tiles = (char **) 0x8000;
 
 #ifndef TILES_LINKED_IN
 static char oldbank;
+
+#define CENTRE(N) ((36 - (N) * 4) * 8)
 
 static void
 select_sram (char newbank)
@@ -384,6 +391,10 @@ static char background[9][9] =
 
 #endif
 
+static unsigned long thescore = 0;
+static unsigned movesleft = 100;
+static char jellies;
+
 static void
 hline (char sx, char ex, char y, char andcol, char orcol)
 {
@@ -696,9 +707,9 @@ show_explosions (void)
       }
 }
 
-static void pause (int amt)
+static void pause (unsigned long amt)
 {
-  long wait;
+  unsigned long wait;
   for (wait = 0; wait < amt; wait++)
     __asm__ __volatile__ ("nop");
 }
@@ -792,7 +803,7 @@ selected_state (char selected)
   else
     {
       for (char c = 0; c < 8; c++)
-        setpalette (c + 8, c == 7 ? 0 : 7);
+        setpalette (c + 8, 7);
     }
 }
 
@@ -913,11 +924,16 @@ move_is_possible (char oldx, char oldy, char newx, char newy)
   return success;
 }
 
+static void big_text (char *, char *, char, char);
+
 static char
 reshuffle (void)
 {
   char i, j;
   char *cp = &playfield[0][0];
+
+  selected_state (0);
+  big_text (&screenbase[10*ROWLENGTH+CENTRE (9)], "Reshuffle", 0xff, 0xc0);
 
   for (i = 0; i < 81; i++)
     {
@@ -946,6 +962,8 @@ reshuffle (void)
           redraw_tile (i % 9, i / 9);
         }
     }
+
+  big_text (&screenbase[10*ROWLENGTH+CENTRE (9)], "Reshuffle", 0x3f, 0x0);
 }
 
 static char
@@ -984,7 +1002,7 @@ retrigger (void)
   return success;
 }
 
-void
+static void
 do_explosions (void)
 {
   show_explosions ();
@@ -993,9 +1011,86 @@ do_explosions (void)
   reset_playfield_marks ();
 }
 
+static void
+write_number (char *at, unsigned long number, char digits)
+{
+  unsigned long maximum = 1;
+  char i;
+  
+  for (i = 1; i < digits; i++)
+    maximum *= 10;
+
+  for (i = 0; i < digits; i++)
+    {
+      char *digit = tiles[DIGITS_TEXT];
+      digit += ((number / maximum) % 10) * 16;
+      memcpy (at, digit, 16);
+      at += 16;
+      maximum /= 10;
+    }
+}
+
+static void
+big_text (char *chartop, char *str, char andval, char orval)
+{
+  static char exploded[9];
+  char x, y, c;
+
+  while (*str)
+    {
+      char thechar = *str++;
+      char *charscan = chartop;
+      exploded[0] = thechar;
+      osword (10, exploded);
+      for (y = 0; y < 8; y++)
+        {
+          char row = exploded[y + 1];
+          char *screenrow = charscan;
+          for (x = 0; x < 8; x++)
+            {
+              if (row & 0x80)
+                {
+                  for (c = 0; c < 8; c++)
+                    screenrow[c] = (screenrow[c] & andval) | orval;
+                }
+              screenrow += 8;
+              row <<= 1;
+            }
+          charscan += ROWLENGTH;
+        }
+      chartop += 8 * 8;
+    }
+}
+
+static void
+refresh_status (void)
+{
+  write_number (&screenbase[ROWLENGTH * 27 + 14 * 8], movesleft, 3);
+  write_number (&screenbase[ROWLENGTH * 27 + 32 * 8], jellies, 2);
+  write_number (&screenbase[ROWLENGTH * 27 + 51 * 8], thescore, 9);
+}
+
+static void
+count_jelly (void)
+{
+  char cnt = 0;
+  char x, y;
+  
+  for (y = 0; y < 9; y++)
+    for (x = 0; x < 9; x++)
+      {
+        char bg_tile = background[y][x] & BG_MASK;
+        if (bg_tile == 1 || bg_tile == 2)
+          cnt++;
+      }
+
+  jellies = cnt;
+}
+
 //static unsigned rowmultab[32];
 
-int main (void)
+static char
+play_level (void)
 {
   unsigned char x, y;
   unsigned char oldcx, oldcy, cursx = 0, cursy = 0;
@@ -1003,43 +1098,18 @@ int main (void)
   unsigned char selected = 0;
   char i;
 
-#ifndef TILES_LINKED_IN
-  select_sram (4);
-  osfile_load ("tiles\r", (void*) 0x5800);
-  memcpy ((void*) 0x8000, (void*) 0x5800, 10240);
-#endif
+  memset (&screenbase[ROWLENGTH*27], 0x30, ROWLENGTH);
+  memcpy (&screenbase[ROWLENGTH*27 + 2 * 8], tiles[MOVES_TEXT], 11 * 8);
+  memcpy (&screenbase[ROWLENGTH*27 + 23 * 8], tiles[JELLY_TEXT], 8 * 8);
+  memcpy (&screenbase[ROWLENGTH*27 + 39 * 8], tiles[SCORE_TEXT], 10 * 8);
 
-  //setmode (2);
+  thescore = 0;
+  movesleft = 100;
 
-  // Shrink the screen a bit (free up some RAM!).
-  screen_start (screenbase);
-  vdu_var (1, 72);
-  vdu_var (6, 27);
-
-  /* Unfortunately this doesn't really work -- not sure if you can make the
-     OS graphics routines work with funny-sized displays.  */
-
-  /*WRITE_BYTE (0x350, (unsigned)screenbase & 255);
-  WRITE_BYTE (0x351, (unsigned)screenbase >> 8);
-  WRITE_BYTE (0x352, ROWLENGTH & 255);
-  WRITE_BYTE (0x353, ROWLENGTH >> 8);*/
-
-  /*for (i = 0; i < 32; i++)
-    {
-      unsigned ent = i * ROWLENGTH;
-      rowmultab[i] = ((ent >> 8) & 255) | ((ent & 255) << 8);
-    }
-  WRITE_BYTE (0xe0, ((unsigned) &rowmultab[0]) & 255);
-  WRITE_BYTE (0xe1, ((unsigned) &rowmultab[0]) >> 8);*/
+  count_jelly ();
+  refresh_status ();
 
   selected_state (0);
-
-  /* Cursor keys produce character codes.  */
-  osbyte (4, 1, 0);
-
-  /* Flash speed.  */
-  osbyte (9, 4, 0);
-  osbyte (10, 4, 0);
 
   do
     {
@@ -1067,15 +1137,6 @@ int main (void)
     }
   while (reshuffle_needed ());
 
-  /*for (i = 0; i < 200; i++)
-    hline (100 - i / 2, 100 + i / 3, i, 0xff, 0xc0);
-
-  for (i = 0; i < 200; i++)
-    hline (100 - i / 2, 100 + i / 3, i, 0x3f, 0x00);*/
-    
-  /*for (i = 0; i < 100; i++)
-    vline (i, 50 - i / 2, 50 + i / 3, 0xff, 0xc0);*/
-
   reset_playfield_marks ();
 
   for (y = 0; y < 9; y++)
@@ -1092,7 +1153,7 @@ int main (void)
   if (reshuffle_needed ())
     return 1;
 
-  while (1)
+  while (movesleft > 0 && jellies > 0)
     {
       char readchar;
       oldcx = cursx;
@@ -1155,9 +1216,11 @@ int main (void)
         if (oldcx != cursx || oldcy != cursy)
           {
             char selected_tile = playfield[oldcy][oldcx];
+
             if (selected
                 && successful_move (oldcx, oldcy, cursx, cursy))
               {
+                char retriggers = 0;
                 show_swap (oldcx, oldcy, cursx, cursy);
 
                 do_explosions ();
@@ -1165,12 +1228,28 @@ int main (void)
                 while (1)
                   {
                     while (retrigger ())
-                      do_explosions ();
+                      {
+                        do_explosions ();
+                        retriggers++;
+                      }
 
                     if (!reshuffle_needed ())
                       break;
 
                     reshuffle ();
+                  }
+
+                if (retriggers > 1)
+                  {
+                    big_text (&screenbase[5*ROWLENGTH+CENTRE(5)], "Sugar",
+                              0xff, 0xc0);
+                    big_text (&screenbase[15*ROWLENGTH+CENTRE(5)], "Smash",
+                              0xff, 0xc0);
+                    pause (40000);
+                    big_text (&screenbase[5*ROWLENGTH+CENTRE(5)], "Sugar",
+                              0x3f, 0x0);
+                    big_text (&screenbase[15*ROWLENGTH+CENTRE(5)], "Smash",
+                              0x3f, 0x0);
                   }
 
                 /* OR with 8.  */
@@ -1179,6 +1258,10 @@ int main (void)
 
                 selected = 0;
                 selected_state (selected);
+
+                movesleft--;
+                count_jelly ();
+                refresh_status ();
               }
             else
               {
@@ -1198,17 +1281,62 @@ int main (void)
               }
           }
       }
+  return movesleft > 0;
+}
 
-/*
-  for (rep = 0; rep < 3; rep++)
+int main (void)
+{
+  int win;
+
+#ifndef TILES_LINKED_IN
+  select_sram (4);
+  osfile_load ("tiles\r", (void*) 0x5800);
+  memcpy ((void*) 0x8000, (void*) 0x5800, 10240);
+#endif
+
+  //setmode (2);
+
+  // Shrink the screen a bit (free up some RAM!).
+  screen_start (screenbase);
+  vdu_var (1, 72);
+  vdu_var (6, 28);
+
+  /* Unfortunately this doesn't really work -- not sure if you can make the
+     OS graphics routines work with funny-sized displays.  */
+
+  /*WRITE_BYTE (0x350, (unsigned)screenbase & 255);
+  WRITE_BYTE (0x351, (unsigned)screenbase >> 8);
+  WRITE_BYTE (0x352, ROWLENGTH & 255);
+  WRITE_BYTE (0x353, ROWLENGTH >> 8);*/
+
+  /*for (i = 0; i < 32; i++)
     {
-      for (row = 8 * 3 - 1; row > 0; row--)
-        {
-          char *rowat = &screenbase[row * 640];
-          memcpy (rowat, rowat - 640, 640);
-        }
-      memset (screenbase, 0, 640);
-    }*/
+      unsigned ent = i * ROWLENGTH;
+      rowmultab[i] = ((ent >> 8) & 255) | ((ent & 255) << 8);
+    }
+  WRITE_BYTE (0xe0, ((unsigned) &rowmultab[0]) & 255);
+  WRITE_BYTE (0xe1, ((unsigned) &rowmultab[0]) >> 8);*/
+
+
+  /* Cursor keys produce character codes.  */
+  osbyte (4, 1, 0);
+
+  /* Flash speed.  */
+  osbyte (9, 4, 0);
+  osbyte (10, 4, 0);
+
+  do
+    {
+      win = play_level ();
+
+      if (win)
+        big_text (&screenbase[10*ROWLENGTH+CENTRE (4)], "WIN!", 0x0, 0xc0);
+      else
+        big_text (&screenbase[10*ROWLENGTH+CENTRE (6)], "Failed", 0x0, 0xc0);
+
+      osrdch ();
+    }
+  while (1);
 
   return 0;
 }
