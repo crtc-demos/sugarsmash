@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef unsigned short uint16_t;
 
@@ -27,9 +28,35 @@ static uint16_t lfsr = 0xace1u;
 
 static char *const screenbase = (char *) 0x4300;
 
+#ifdef TILES_LINKED_IN
+extern char *tiles[];
+#else
+char **tiles = (char **) 0x8000;
+#endif
+
 #define ROWLENGTH 576
 
+#define READ_BYTE(A) (*(volatile char *) (A))
 #define WRITE_BYTE(A, V) (*(volatile char *) (A) = (V))
+
+#ifndef TILES_LINKED_IN
+static char oldbank;
+
+static void
+select_sram (char newbank)
+{
+  oldbank = READ_BYTE (0xf4);
+  WRITE_BYTE (0xf4, newbank);
+  WRITE_BYTE (0xfe30, newbank);
+}
+
+static void
+deselect_sram (void)
+{
+  WRITE_BYTE (0xf4, oldbank);
+  WRITE_BYTE (0xfe30, oldbank);
+}
+#endif
 
 static unsigned int
 rand (void)
@@ -208,7 +235,6 @@ screen_start (void *addr)
   vdu_var (12, iaddr >> 8);
 }
 
-extern char *tiles[];
 
 static void
 render_tile (char *addr, char tileno)
@@ -303,7 +329,7 @@ static char rng (void)
 
 static char playfield[9][9];
 
-#if 1
+#if 0
 static char background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -326,9 +352,9 @@ static char background[9][9] =
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 0, 0, 0, S, S, S, 0, 0, 0 },
-    { 0, 0, 0, S, 3, S, 0, 0, 0 },
-    { 0, 0, 0, S, S, S, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, S, 0, 0, 0 },
     { C, 0, 0, 0, 0, 0, 0, 0, C },
     { C, 0, 0, 0, 0, 0, 0, 0, C },
     { C, C, 0, 0, 0, 0, 0, C, C }
@@ -426,7 +452,7 @@ candy_match (char lhs, char rhs)
   lhs &= 127;
   rhs &= 127;
 
-  if (lhs < FIRST_NONCOLOUR || rhs < FIRST_NONCOLOUR)
+  if (lhs < FIRST_NONCOLOUR && rhs < FIRST_NONCOLOUR)
     return (lhs % 6) == (rhs % 6);
 
   return 0;
@@ -505,6 +531,9 @@ trigger (char x, char y, char eq)
   char trigger_char = playfield[y][x] & 127, i, j;
 
   playfield[y][x] |= 128;
+
+  if (trigger_char == EMPTY_TILE || trigger_char == SWIRL_TILE)
+    return;
 
   // We're exploding a colourbomb!
   if (trigger_char == COLOURBOMB_TILE)
@@ -681,7 +710,9 @@ shuffle_explosions (void)
             {
               if (playfield[use_y][x] == EMPTY_TILE)
                 {
-                  if (use_y > 0)
+                  if (use_y > 0 && (background[use_y - 1][x] & ~BG_MASK))
+                    playfield[use_y][x] = EMPTY_TILE;
+                  else if (use_y > 0)
                     {
                       playfield[use_y][x] = playfield[use_y - 1][x];
                       playfield[use_y - 1][x] = EMPTY_TILE;
@@ -809,6 +840,14 @@ int main (void)
   unsigned char selected = 0;
   char i;
 
+#ifndef TILES_LINKED_IN
+  select_sram (4);
+  osfile_load ("tiles\r", (void*) 0x5800);
+  memcpy ((void*) 0x8000, (void*) 0x5800, 10240);
+  /*printf ("First tile: %p\n", tiles[0]);
+  return 1;*/
+#endif
+
   //setmode (2);
 
   // Shrink the screen a bit (free up some RAM!).
@@ -933,7 +972,6 @@ int main (void)
           redraw_tile (cursx, cursy);
           box (cursx, cursy, 0xff, 0xc0);
           break;
-          
 #endif
         case 13:
           selected = !selected;
