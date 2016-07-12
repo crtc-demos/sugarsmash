@@ -347,6 +347,8 @@ static char background[9][9] =
 #define S SWIRL_MASK
 #define C CAGE_MASK
 
+#if 0
+
 static char background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -359,6 +361,23 @@ static char background[9][9] =
     { 1|C, 0, 0, 0, 0, 0, 0, 0, 1|C },
     { 2|C, 2|C, 0, 0, 0, 0, 0, 2|C, 2|C }
   };
+
+#else
+
+static char background[9][9] =
+  {
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { S, S, S, S, S, S, S, S, S },
+    { C, C, C, C, C, C, C, C, C },
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+    { 1, 1, 1, 1, 1, 1, 1, 1, 1 }
+  };
+
+#endif
 
 #undef C
 #undef H
@@ -475,7 +494,7 @@ explode_a_colour (char c)
 static void trigger (char, char, char);
 
 static char
-stripes_match (char oldx, char oldy, char newx, char newy)
+stripes_match (char oldx, char oldy, char newx, char newy, char fix_move)
 {
   char lhs = playfield[oldy][oldx], rhs = playfield[newy][newx];
   char i;
@@ -483,13 +502,14 @@ stripes_match (char oldx, char oldy, char newx, char newy)
   if (lhs >= V_TILES && lhs < FIRST_NONCOLOUR
       && rhs >= V_TILES && rhs < FIRST_NONCOLOUR)
     {
-      for (i = 0; i < 9; i++)
-        {
-          trigger (i, oldy, lhs);
-          trigger (oldx, i, lhs);
-          trigger (i, newy, rhs);
-          trigger (newx, i, rhs);
-        }
+      if (fix_move)
+        for (i = 0; i < 9; i++)
+          {
+            trigger (i, oldy, lhs);
+            trigger (oldx, i, lhs);
+            trigger (i, newy, rhs);
+            trigger (newx, i, rhs);
+          }
       return 1;
     }
 
@@ -497,13 +517,13 @@ stripes_match (char oldx, char oldy, char newx, char newy)
 }
 
 static char
-colourbomb_match (char *lhsp, char *rhsp)
+colourbomb_match (char *lhsp, char *rhsp, char fix_move)
 {
   char lhs = *lhsp, rhs = *rhsp;
 
   if (lhs == COLOURBOMB_TILE)
     {
-      if (rhs < FIRST_NONCOLOUR)
+      if (fix_move && rhs < FIRST_NONCOLOUR)
         {
           *lhsp |= 128;
           explode_a_colour (rhs);
@@ -513,7 +533,7 @@ colourbomb_match (char *lhsp, char *rhsp)
     }
   else if (rhs == COLOURBOMB_TILE)
     {
-      if (lhs < FIRST_NONCOLOUR)
+      if (fix_move && lhs < FIRST_NONCOLOUR)
         {
           *rhsp |= 128;
           explode_a_colour (lhs);
@@ -800,12 +820,16 @@ special_candy (char *position, char h_score, char v_score)
 }
 
 static char
-successful_move (char oldx, char oldy, char newx, char newy)
+permitted_swap (char oldx, char oldy, char newx, char newy)
 {
-  char selected_tile;
-  char h_score = 0, v_score = 0, success = 0;
   char lhs = playfield[oldy][oldx];
   char rhs = playfield[newy][newx];
+
+  /* Swapping a colour with itself isn't a "move".  */
+  if (lhs < FIRST_NONCOLOUR
+      && rhs < FIRST_NONCOLOUR
+      && (lhs % 6) == (rhs % 6))
+    return 0;
 
   /* Disallow illegal moves.  */
   if ((rhs >= FIRST_NONCOLOUR
@@ -816,15 +840,31 @@ successful_move (char oldx, char oldy, char newx, char newy)
       && rhs != EMPTY_TILE)
     return 0;
 
+  /* Can't swap with cages or swirls.  */
   if ((background[oldy][oldx] & ~BG_MASK)
       || (background[newy][newx] & ~BG_MASK))
     return 0;
 
+  return 1;
+}
+
+static char
+successful_move (char oldx, char oldy, char newx, char newy)
+{
+  char selected_tile;
+  char h_score = 0, v_score = 0, success = 0;
+  char lhs = playfield[oldy][oldx];
+  char rhs = playfield[newy][newx];
+
+  if (!permitted_swap (oldx, oldy, newx, newy))
+    return 0;
+
   do_swap (oldx, oldy, newx, newy);
 
-  success = stripes_match (oldx, oldy, newx, newy);
+  success = stripes_match (oldx, oldy, newx, newy, 1);
 
-  success |= colourbomb_match (&playfield[newy][newx], &playfield[oldy][oldx]);
+  success |= colourbomb_match (&playfield[newy][newx],
+                               &playfield[oldy][oldx], 1);
 
   selected_tile = playfield[newy][newx];
   h_score = horizontal_match (newx, newy, selected_tile, 1);
@@ -847,6 +887,83 @@ successful_move (char oldx, char oldy, char newx, char newy)
   do_swap (oldx, oldy, newx, newy);
 
   return 0;
+}
+
+static char
+move_is_possible (char oldx, char oldy, char newx, char newy)
+{
+  char success = 0;
+  
+  if (!permitted_swap (oldx, oldy, newx, newy))
+    return 0;
+  
+  if (stripes_match (oldx, oldy, newx, newy, 0))
+    return 1;
+
+  if (colourbomb_match (&playfield[newy][newx], &playfield[oldy][oldx], 0))
+    return 1;
+  
+  do_swap (oldx, oldy, newx, newy);
+  if (horizontal_match (oldx, oldy, playfield[oldy][oldx], 0) >= 3
+      || vertical_match (oldx, oldy, playfield[oldy][oldx], 0) >= 3
+      || horizontal_match (newx, newy, playfield[newy][newx], 0) >= 3
+      || vertical_match (newx, newy, playfield[newy][newx], 0) >= 3)
+    success = 1;
+  do_swap (oldx, oldy, newx, newy);
+  return success;
+}
+
+static char
+reshuffle (void)
+{
+  char i, j;
+  char *cp = &playfield[0][0];
+
+  for (i = 0; i < 81; i++)
+    {
+      if (cp[i] < FIRST_NONCOLOUR)
+        {
+          char range = 81 - (i + 1), replacement, tmp, any_to_swap = 0;
+          
+          for (j = i + 1; i < 81; j++)
+            if (cp[j] >= FIRST_NONCOLOUR)
+              {
+                any_to_swap = 1;
+                break;
+              }
+          
+          if (any_to_swap)
+            {
+              do
+                {
+                  replacement = i + 1 + rand () % range;
+                }
+              while (cp[replacement] >= FIRST_NONCOLOUR);
+              tmp = cp[i];
+              cp[i] = cp[replacement];
+              cp[replacement] = tmp;
+            }
+          redraw_tile (i % 9, i / 9);
+        }
+    }
+}
+
+static char
+reshuffle_needed (void)
+{
+  char x, y;
+
+  for (x = 0; x < 8; x++)
+    for (y = 0; y < 8; y++)
+      {
+        if (move_is_possible (x, y, x + 1, y))
+          return 0;
+
+        if (move_is_possible (x, y, x, y + 1))
+          return 0;
+      }
+
+  return 1;
 }
 
 static char
@@ -924,27 +1041,31 @@ int main (void)
   osbyte (9, 4, 0);
   osbyte (10, 4, 0);
 
-  for (y = 0; y < 9; y++)
-    for (x = 0; x < 9; x++)
-      playfield[y][x] = 255;
+  do
+    {
+      for (y = 0; y < 9; y++)
+        for (x = 0; x < 9; x++)
+          playfield[y][x] = 255;
 
-  for (y = 0; y < 9; y++)
-    for (x = 0; x < 9; x++)
-      {
-        char thistile;
-        do
+      for (y = 0; y < 9; y++)
+        for (x = 0; x < 9; x++)
           {
-            if (background[y][x] & SWIRL_MASK)
-              thistile = SWIRL_TILE;
-            else if ((background[y][x] & BG_MASK) == 3)
-              thistile = EMPTY_TILE;
-            else
-              thistile = rng ();
-            playfield[y][x] = thistile;
+            char thistile;
+            do
+              {
+                if (background[y][x] & SWIRL_MASK)
+                  thistile = SWIRL_TILE;
+                else if ((background[y][x] & BG_MASK) == 3)
+                  thistile = EMPTY_TILE;
+                else
+                  thistile = rng ();
+                playfield[y][x] = thistile;
+              }
+            while (horizontal_match (x, y, thistile, 0) >= 3
+                   || vertical_match (x, y, thistile, 0) >= 3);
           }
-        while (horizontal_match (x, y, thistile, 0) >= 3
-               || vertical_match (x, y, thistile, 0) >= 3);
-      }
+    }
+  while (reshuffle_needed ());
 
   /*for (i = 0; i < 200; i++)
     hline (100 - i / 2, 100 + i / 3, i, 0xff, 0xc0);
@@ -967,6 +1088,9 @@ int main (void)
 
   // Flush input buffer.
   osbyte (15, 1, 0);
+
+  if (reshuffle_needed ())
+    return 1;
 
   while (1)
     {
@@ -1038,8 +1162,16 @@ int main (void)
 
                 do_explosions ();
 
-                while (retrigger ())
-                  do_explosions ();
+                while (1)
+                  {
+                    while (retrigger ())
+                      do_explosions ();
+
+                    if (!reshuffle_needed ())
+                      break;
+
+                    reshuffle ();
+                  }
 
                 /* OR with 8.  */
                 //gfx_gcol (1, 8);
