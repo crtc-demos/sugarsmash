@@ -24,7 +24,7 @@ static uint16_t lfsr = 0xace1u;
 
 #define EMPTY_TILE 31
 
-//#define CHEATMODE 1
+#define CHEATMODE 1
 
 static char *const screenbase = (char *) 0x4300;
 
@@ -353,11 +353,11 @@ static char background[9][9] =
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, S, S, S, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 0, 0, 0, 0, 0, S, 0, 0, 0 },
     { C, 0, 0, 0, 0, 0, 0, 0, C },
-    { C, 0, 0, 0, 0, 0, 0, 0, C },
-    { C, C, 0, 0, 0, 0, 0, C, C }
+    { 1|C, 0, 0, 0, 0, 0, 0, 0, 1|C },
+    { 2|C, 2|C, 0, 0, 0, 0, 0, 2|C, 2|C }
   };
 
 #undef C
@@ -437,6 +437,8 @@ redraw_tile (char x, char y)
   render_solid_tile (tileat, BG_TILES + (background[y][x] & BG_MASK));
   if ((playfield[y][x] & 127) != EMPTY_TILE)
     render_tile (tileat, playfield[y][x] & 127);
+  if (background[y][x] & CAGE_MASK)
+    render_tile (tileat, CAGE_TILE);
 }
 
 static void
@@ -682,10 +684,19 @@ static void pause (int amt)
 }
 
 static void
+deswirl (char x, char y)
+{
+  background[y][x] &= ~SWIRL_MASK;
+  playfield[y][x] = EMPTY_TILE;
+  redraw_tile (x, y);
+}
+
+static void
 shuffle_explosions (void)
 {
   char x, y, y2;
   char some_explosions = 0;
+  char some_movement = 0;
 
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
@@ -693,6 +704,21 @@ shuffle_explosions (void)
         if (playfield[y][x] & 128)
           {
             playfield[y][x] = EMPTY_TILE;
+
+            if (background[y][x] & CAGE_MASK)
+              {
+                background[y][x] &= ~CAGE_MASK;
+                redraw_tile (x, y);
+              }
+
+            if (x > 0 && (background[y][x - 1] & SWIRL_MASK))
+              deswirl (x - 1, y);
+            if (x < 8 && (background[y][x + 1] & SWIRL_MASK))
+              deswirl (x + 1, y);
+            if (y > 0 && (background[y - 1][x] & SWIRL_MASK))
+              deswirl (x, y - 1);
+            if (y < 8 && (background[y + 1][x] & SWIRL_MASK))
+              deswirl (x, y + 1);
 
             // Remove jelly (like a boss).
             if (background[y][x] > 0 && background[y][x] <= 2)
@@ -702,7 +728,7 @@ shuffle_explosions (void)
 
   do
     {
-      some_explosions = 0;
+      some_explosions = some_movement = 0;
       for (y = 0; y < 9; y++)
         {
           char use_y = 8 - y;
@@ -714,11 +740,16 @@ shuffle_explosions (void)
                     playfield[use_y][x] = EMPTY_TILE;
                   else if (use_y > 0)
                     {
+                      if (playfield[use_y - 1][x] != EMPTY_TILE)
+                        some_movement = 1;
                       playfield[use_y][x] = playfield[use_y - 1][x];
                       playfield[use_y - 1][x] = EMPTY_TILE;
                     }
                   else
-                    playfield[0][x] = rng ();
+                    {
+                      playfield[0][x] = rng ();
+                      some_movement = 1;
+                    }
 
                   redraw_tile (x, use_y);
 
@@ -727,7 +758,7 @@ shuffle_explosions (void)
             }
         }
     }
-  while (some_explosions);
+  while (some_explosions && some_movement);
 }
 
 static void
@@ -773,6 +804,21 @@ successful_move (char oldx, char oldy, char newx, char newy)
 {
   char selected_tile;
   char h_score = 0, v_score = 0, success = 0;
+  char lhs = playfield[oldy][oldx];
+  char rhs = playfield[newy][newx];
+
+  /* Disallow illegal moves.  */
+  if ((rhs >= FIRST_NONCOLOUR
+       || lhs >= FIRST_NONCOLOUR)
+      && lhs != COLOURBOMB_TILE
+      && rhs != COLOURBOMB_TILE
+      && lhs != EMPTY_TILE
+      && rhs != EMPTY_TILE)
+    return 0;
+
+  if ((background[oldy][oldx] & ~BG_MASK)
+      || (background[newy][newx] & ~BG_MASK))
+    return 0;
 
   do_swap (oldx, oldy, newx, newy);
 
@@ -844,8 +890,6 @@ int main (void)
   select_sram (4);
   osfile_load ("tiles\r", (void*) 0x5800);
   memcpy ((void*) 0x8000, (void*) 0x5800, 10240);
-  /*printf ("First tile: %p\n", tiles[0]);
-  return 1;*/
 #endif
 
   //setmode (2);
@@ -961,16 +1005,19 @@ int main (void)
         case 'v':
         case 'w':
           box (cursx, cursy, 0x3f, 0x00);
-          if (readchar == 'h')
+          if (readchar == 'h' || readchar == 'H')
             make_special (H_TILES, &playfield[y][x]);
-          else if (readchar == 'v')
+          else if (readchar == 'v' || readchar == 'V')
             make_special (V_TILES, &playfield[y][x]);
-          else if (readchar == 'w')
+          else if (readchar == 'w' || readchar == 'W')
             make_special (WRAP_TILES, &playfield[y][x]);
           else
             playfield[cursy][cursx] = readchar - '1';
           redraw_tile (cursx, cursy);
           box (cursx, cursy, 0xff, 0xc0);
+          break;
+        case 'r': case 'R':
+          redraw_tile (cursx, cursy);
           break;
 #endif
         case 13:
