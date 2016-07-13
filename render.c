@@ -703,17 +703,38 @@ show_swap (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
   redraw_tile (newx, newy);
 }
 
+static void sound (int channel, int amplitude, int pitch, int duration);
+
 static void
 show_explosions (void)
 {
   uint8_t x, y;
+  uint8_t made_jelly_sound = 0;
+  uint8_t num_explosions = 0;
+  uint8_t explosion_vol;
 
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
       {
         if (playfield[y][x] & 128)
-          render_tile_xy (x, y, EXPLOSION_TILE);
+          {
+            if (!made_jelly_sound && (background[y][x] & BG_MASK) == 1)
+              {
+                sound (0x13, 3, 114 + (rand () & 15), 10);
+                made_jelly_sound = 1;
+              }
+
+            render_tile_xy (x, y, EXPLOSION_TILE);
+            num_explosions++;
+          }
       }
+
+  explosion_vol = (unsigned) num_explosions + 6;
+  if (explosion_vol > 15)
+    explosion_vol = 15;
+
+  sound (0x10, -explosion_vol, 7, 15);
+  sound (0x11, 2, 200, 15);
 }
 
 static void pause (unsigned long amt)
@@ -1288,10 +1309,10 @@ play_level (uint8_t levelno)
               && successful_move (oldcx, oldcy, cursx, cursy))
             {
               uint8_t retriggers = 0;
-              uint8_t plus_sound = 70;
+              uint8_t plus_sound = 66;
               show_swap (oldcx, oldcy, cursx, cursy);
 
-              sound (0x11, 1, 50, 10);
+              sound (0x12, 1, 50, 10);
 
               do_explosions ();
 
@@ -1299,10 +1320,10 @@ play_level (uint8_t levelno)
                 {
                   while (retrigger ())
                     {
-                      sound (0x11, 1, plus_sound, 10);
+                      sound (0x12, 1, plus_sound, 10);
                       do_explosions ();
                       retriggers++;
-                      plus_sound += 20;
+                      plus_sound += 16;
                     }
 
                   if (!reshuffle_needed ())
@@ -1387,11 +1408,24 @@ static envelope env2 =
   0, 0
 };
 
+static envelope env3 =
+{
+  3,
+  3,
+  5, -5, 0,
+  2, 2, 0,
+  0, -3, 0, -5,
+  126, 0
+};
+
+static envelope *envs[] = { &env1, &env2, &env3 };
+
 static void
 config_envelopes (void)
 {
-  osword (8, &env1);
-  osword (8, &env2);
+  uint8_t i;
+  for (i = 0; i < 3; i++)
+    osword (8, envs[i]);
 }
 
 int main (void)
@@ -1414,8 +1448,10 @@ int main (void)
 
   // Shrink the screen a bit (free up some RAM!).
   screen_start (screenbase);
-  vdu_var (1, 72);
-  vdu_var (6, 28);
+  vdu_var (1, 72); // horizontal displayed
+  vdu_var (2, 94); // horizontal sync position
+  vdu_var (6, 28); // vertical displayed
+  vdu_var (7, 32); // vertical sync position
 
   /* Unfortunately this doesn't really work -- not sure if you can make the
      OS graphics routines work with funny-sized displays.  */
