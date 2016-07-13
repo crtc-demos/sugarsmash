@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+typedef unsigned char uint8_t;
+typedef signed char int8_t;
 typedef unsigned short uint16_t;
 
 static uint16_t lfsr = 0xace1u;
@@ -22,6 +24,7 @@ static uint16_t lfsr = 0xace1u;
 #define JELLY_TEXT 33
 #define SCORE_TEXT 34
 #define MOVES_TEXT 35
+#define LEVEL1_PTR 36
 
 #define SWIRL_MASK 0x80
 #define CAGE_MASK  0x40
@@ -30,27 +33,30 @@ static uint16_t lfsr = 0xace1u;
 #define EMPTY_TILE 31
 
 //#define CHEATMODE 1
+#define ROM
 
-static char *const screenbase = (char *) 0x4100;
+static uint8_t *const screenbase = (uint8_t *) 0x4100;
 
 #ifdef TILES_LINKED_IN
-extern char *tiles[];
+extern uint8_t *tiles[];
+#elif defined(ROM)
+uint8_t **tiles = (uint8_t **) 0xe00;
 #else
-char **tiles = (char **) 0x8000;
+uint8_t **tiles = (uint8_t **) 0x8000;
 #endif
 
 #define ROWLENGTH 576
 
-#define READ_BYTE(A) (*(volatile char *) (A))
-#define WRITE_BYTE(A, V) (*(volatile char *) (A) = (V))
+#define READ_BYTE(A) (*(volatile uint8_t *) (A))
+#define WRITE_BYTE(A, V) (*(volatile uint8_t *) (A) = (V))
 
 #ifndef TILES_LINKED_IN
-static char oldbank;
+static uint8_t oldbank;
 
 #define CENTRE(N) ((36 - (N) * 4) * 8)
 
 static void
-select_sram (char newbank)
+select_sram (uint8_t newbank)
 {
   oldbank = READ_BYTE (0xf4);
   WRITE_BYTE (0xf4, newbank);
@@ -78,13 +84,13 @@ rand (void)
 }
 
 static void
-oswrch (char x)
+oswrch (uint8_t x)
 {
   __asm__ __volatile__ ("jsr $ffee" : : "Aq" (x));
 }
 
-static char
-osbyte (char a, char x, char y)
+static uint8_t
+osbyte (uint8_t a, uint8_t x, uint8_t y)
 {
   unsigned char dma, dmx, dmy;
   __asm__ __volatile__ ("jsr $fff4" : "=Aq" (dma), "=xq" (dmx), "=yq" (dmy)
@@ -114,7 +120,7 @@ osrdch (void)
 }
 
 static void
-osword (unsigned char code, unsigned char *parameters)
+osword (unsigned char code, void *parameters)
 {
   unsigned char addr_lo = ((unsigned short) parameters) & 0xff;
   unsigned char addr_hi = (((unsigned short) parameters) >> 8) & 0xff;
@@ -165,23 +171,23 @@ osfile_load (const char *filename, void *address)
 }
 
 static void
-setmode (char mode)
+setmode (uint8_t mode)
 {
   oswrch (22);
   oswrch (mode);
 }
 
 static void
-setpalette (unsigned char physical, unsigned char logical)
+setpalette (uint8_t physical, uint8_t logical)
 {
-  static unsigned char params[5] = {0, 0, 0, 0, 0};
+  static uint8_t params[5] = {0, 0, 0, 0, 0};
   params[0] = physical;
   params[1] = logical;
   osword (0xc, &params[0]);
 }
 
 static void
-gfx_plot (char code, unsigned x, unsigned y)
+gfx_plot (uint8_t code, unsigned x, unsigned y)
 {
   oswrch (25);
   oswrch (code);
@@ -222,9 +228,9 @@ gfx_draw (unsigned x, unsigned y)
 }
 
 static void
-vdu_var (char reg, char val)
+vdu_var (uint8_t reg, uint8_t val)
 {
-  char n;
+  uint8_t n;
   oswrch(23);
   oswrch(0);
   oswrch(reg);
@@ -244,25 +250,25 @@ screen_start (void *addr)
 
 
 static void
-render_tile (char *addr, char tileno)
+render_tile (uint8_t *addr, uint8_t tileno)
 {
-  char x, y, row;
-  char *tileptr = tiles[tileno];
-  char count = 0, type = 0;
+  uint8_t x, y, row;
+  uint8_t *tileptr = tiles[tileno];
+  uint8_t count = 0, type = 0;
 
   for (x = 0; x < 8; x++)
     {
-      char *coladdr = addr;
+      uint8_t *coladdr = addr;
 
       for (row = 0; row < 3; row++)
         {
-          char *rowaddr = coladdr;
+          uint8_t *rowaddr = coladdr;
 
           for (y = 0; y < 8; y++)
             {
               if (count == 0)
                 {
-                  char byte = *tileptr++;
+                  uint8_t byte = *tileptr++;
                   if ((byte & 0xc0) == 0)
                     type = 0;
                   else if ((byte & 0xc0) == 0x40) /* solid */
@@ -278,14 +284,14 @@ render_tile (char *addr, char tileno)
                 *rowaddr = *tileptr++;
               else if (type == 2)
                 {
-                  char screenbyte = *rowaddr;
+                  uint8_t screenbyte = *rowaddr;
                   screenbyte &= 0x55;
                   screenbyte |= *tileptr++;
                   *rowaddr = screenbyte;
                 }
               else if (type == 3)
                 {
-                  char screenbyte = *rowaddr;
+                  uint8_t screenbyte = *rowaddr;
                   screenbyte &= 0xaa;
                   screenbyte |= *tileptr++;
                   *rowaddr = screenbyte;
@@ -303,14 +309,14 @@ render_tile (char *addr, char tileno)
 }
 
 static void
-render_solid_tile (char *addr, char tileno)
+render_solid_tile (uint8_t *addr, uint8_t tileno)
 {
-  char x, y, row;
-  char *tileptr = tiles[tileno];
+  uint8_t x, y, row;
+  uint8_t *tileptr = tiles[tileno];
 
   for (x = 0; x < 8; x++)
     {
-      char *coladdr = addr;
+      uint8_t *coladdr = addr;
 
       for (row = 0; row < 3; row++)
         {
@@ -323,9 +329,9 @@ render_solid_tile (char *addr, char tileno)
     }
 }
 
-static char rng (void)
+static uint8_t rng (void)
 {
-  char rnum;
+  uint8_t rnum;
   
   do {
     rnum = rand() & 7;
@@ -334,20 +340,20 @@ static char rng (void)
   return rnum;
 }
 
-static char playfield[9][9];
+static uint8_t playfield[9][9];
 
-#if 0
-static char background[9][9] =
+#if 1
+static uint8_t background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 1, 0, 0, 0, 0 },
+    { 0, 0, 0, 1, 1, 1, 0, 0, 0 },
+    { 0, 0, 0, 0, 1, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-    { 1, 1, 0, 0, 0, 0, 0, 1, 1 },
-    { 2, 2, 2, 2, 2, 2, 2, 2, 2 }
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0 }
   };
 #else
 
@@ -356,7 +362,7 @@ static char background[9][9] =
 
 #if 0
 
-static char background[9][9] =
+static uint8_t background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -371,7 +377,7 @@ static char background[9][9] =
 
 #else
 
-static char background[9][9] =
+static uint8_t background[9][9] =
   {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     { 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -393,13 +399,13 @@ static char background[9][9] =
 
 static unsigned long thescore = 0;
 static unsigned movesleft = 100;
-static char jellies;
+static uint8_t jellies;
 
 static void
-hline (char sx, char ex, char y, char andcol, char orcol)
+hline (uint8_t sx, uint8_t ex, uint8_t y, uint8_t andcol, uint8_t orcol)
 {
-  char *row = &screenbase[(y >> 3) * ROWLENGTH + (y & 7)];
-  char x, len = ex - sx;
+  uint8_t *row = &screenbase[(y >> 3) * ROWLENGTH + (y & 7)];
+  uint8_t x, len = ex - sx;
 
   if (sx & 1)
     {
@@ -419,10 +425,10 @@ hline (char sx, char ex, char y, char andcol, char orcol)
 }
 
 static void
-vline (char x, char sy, char ey, char andcol, char orcol)
+vline (uint8_t x, uint8_t sy, uint8_t ey, uint8_t andcol, uint8_t orcol)
 {
-  char *row = &screenbase[(sy >> 3) * ROWLENGTH + ((x & ~1) << 2)];
-  char y;
+  uint8_t *row = &screenbase[(sy >> 3) * ROWLENGTH + ((x & ~1) << 2)];
+  uint8_t y;
 
   if (x & 1)
     {
@@ -443,7 +449,7 @@ vline (char x, char sy, char ey, char andcol, char orcol)
     }
 }
 
-static void box (char cursx, char cursy, char andcol, char orcol)
+static void box (uint8_t cursx, uint8_t cursy, uint8_t andcol, uint8_t orcol)
 {
   unsigned left = cursx * 16;
   unsigned bottom = cursy * 24;
@@ -461,9 +467,9 @@ static void box (char cursx, char cursy, char andcol, char orcol)
 }
 
 static void
-redraw_tile (char x, char y)
+redraw_tile (uint8_t x, uint8_t y)
 {
-  char *tileat = &screenbase[y * ROWLENGTH * 3 + x * 8 * 8];
+  uint8_t *tileat = &screenbase[y * ROWLENGTH * 3 + x * 8 * 8];
   render_solid_tile (tileat, BG_TILES + (background[y][x] & BG_MASK));
   if ((playfield[y][x] & 127) != EMPTY_TILE)
     render_tile (tileat, playfield[y][x] & 127);
@@ -472,14 +478,14 @@ redraw_tile (char x, char y)
 }
 
 static void
-render_tile_xy (char x, char y, char tileno)
+render_tile_xy (uint8_t x, uint8_t y, uint8_t tileno)
 {
-  char *tileat = &screenbase[y * ROWLENGTH * 3 + x * 8 * 8];
+  uint8_t *tileat = &screenbase[y * ROWLENGTH * 3 + x * 8 * 8];
   render_tile (tileat, tileno);
 }
 
-static char
-candy_match (char lhs, char rhs)
+static uint8_t
+candy_match (uint8_t lhs, uint8_t rhs)
 {
   lhs &= 127;
   rhs &= 127;
@@ -491,9 +497,9 @@ candy_match (char lhs, char rhs)
 }
 
 static void
-explode_a_colour (char c)
+explode_a_colour (uint8_t c)
 {
-  char x, y;
+  uint8_t x, y;
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
       {
@@ -502,13 +508,13 @@ explode_a_colour (char c)
       }
 }
 
-static void trigger (char, char, char);
+static void trigger (uint8_t, uint8_t, uint8_t);
 
-static char
-stripes_match (char oldx, char oldy, char newx, char newy, char fix_move)
+static uint8_t
+stripes_match (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy, uint8_t fix_move)
 {
-  char lhs = playfield[oldy][oldx], rhs = playfield[newy][newx];
-  char i;
+  uint8_t lhs = playfield[oldy][oldx], rhs = playfield[newy][newx];
+  uint8_t i;
 
   if (lhs >= V_TILES && lhs < FIRST_NONCOLOUR
       && rhs >= V_TILES && rhs < FIRST_NONCOLOUR)
@@ -527,10 +533,10 @@ stripes_match (char oldx, char oldy, char newx, char newy, char fix_move)
   return 0;
 }
 
-static char
-colourbomb_match (char *lhsp, char *rhsp, char fix_move)
+static uint8_t
+colourbomb_match (uint8_t *lhsp, uint8_t *rhsp, uint8_t fix_move)
 {
-  char lhs = *lhsp, rhs = *rhsp;
+  uint8_t lhs = *lhsp, rhs = *rhsp;
 
   if (lhs == COLOURBOMB_TILE)
     {
@@ -559,9 +565,9 @@ colourbomb_match (char *lhsp, char *rhsp, char fix_move)
 // Terrifyingly recursive!
 
 static void
-trigger (char x, char y, char eq)
+trigger (uint8_t x, uint8_t y, uint8_t eq)
 {
-  char trigger_char = playfield[y][x] & 127, i, j;
+  uint8_t trigger_char = playfield[y][x] & 127, i, j;
 
   playfield[y][x] |= 128;
 
@@ -575,26 +581,29 @@ trigger (char x, char y, char eq)
       return;
     }
 
-  if (trigger_char >= H_TILES && trigger_char < H_TILES + 6)
+  if (trigger_char >= (uint8_t) H_TILES &&
+      trigger_char < (uint8_t) (H_TILES + 6))
     for (i = 0; i < 9; i++)
       {
         if (!(playfield[y][i] & 128))
           trigger (i, y, eq);
       }
 
-  if (trigger_char >= V_TILES && trigger_char < V_TILES + 6)
+  if (trigger_char >= (uint8_t) V_TILES &&
+      trigger_char < (uint8_t) (V_TILES + 6))
     for (i = 0; i < 9; i++)
       {
         if (!(playfield[i][x] & 128))
           trigger (x, i, eq);
       }
 
-  if (trigger_char >= WRAP_TILES && trigger_char < WRAP_TILES + 6)
+  if (trigger_char >= (uint8_t) WRAP_TILES
+      && trigger_char < (uint8_t) (WRAP_TILES + 6))
     {
-      char l = x > 0 ? x - 1 : 0;
-      char t = y > 0 ? y - 1 : 0;
-      char r = x < 8 ? x + 1 : 8;
-      char b = y < 8 ? y + 1 : 8;
+      uint8_t l = x > 0 ? x - 1 : 0;
+      uint8_t t = y > 0 ? y - 1 : 0;
+      uint8_t r = x < 8 ? x + 1 : 8;
+      uint8_t b = y < 8 ? y + 1 : 8;
       for (i = l; i <= r; i++)
         for (j = t; j <= b; j++)
           {
@@ -604,11 +613,11 @@ trigger (char x, char y, char eq)
     }
 }
 
-static char
-horizontal_match (char x, char y, char eq, char fix_matches)
+static uint8_t
+horizontal_match (uint8_t x, uint8_t y, uint8_t eq, uint8_t fix_matches)
 {
-  char c;
-  char right = x, left = x, matching;
+  uint8_t c;
+  uint8_t right = x, left = x, matching;
   
   for (c = x + 1; c < 9; c++)
     {
@@ -637,11 +646,11 @@ horizontal_match (char x, char y, char eq, char fix_matches)
   return matching;
 }
 
-static char
-vertical_match (char x, char y, char eq, char fix_matches)
+static uint8_t
+vertical_match (uint8_t x, uint8_t y, uint8_t eq, uint8_t fix_matches)
 {
-  char c;
-  char bottom = y, top = y, matching;
+  uint8_t c;
+  uint8_t bottom = y, top = y, matching;
   
   for (c = y + 1; c < 9; c++)
     {
@@ -673,22 +682,22 @@ vertical_match (char x, char y, char eq, char fix_matches)
 static void
 reset_playfield_marks (void)
 {
-  char x, y;
+  uint8_t x, y;
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
       playfield[y][x] &= ~128;
 }
 
 static void
-do_swap (char oldx, char oldy, char newx, char newy)
+do_swap (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
 {
-  char oldtile = playfield[oldy][oldx];
+  uint8_t oldtile = playfield[oldy][oldx];
   playfield[oldy][oldx] = playfield[newy][newx];
   playfield[newy][newx] = oldtile;
 }
 
 static void
-show_swap (char oldx, char oldy, char newx, char newy)
+show_swap (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
 {
   redraw_tile (oldx, oldy);
   redraw_tile (newx, newy);
@@ -697,7 +706,7 @@ show_swap (char oldx, char oldy, char newx, char newy)
 static void
 show_explosions (void)
 {
-  char x, y;
+  uint8_t x, y;
 
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
@@ -715,7 +724,7 @@ static void pause (unsigned long amt)
 }
 
 static void
-deswirl (char x, char y)
+deswirl (uint8_t x, uint8_t y)
 {
   background[y][x] &= ~SWIRL_MASK;
   playfield[y][x] = EMPTY_TILE;
@@ -725,9 +734,9 @@ deswirl (char x, char y)
 static void
 shuffle_explosions (void)
 {
-  char x, y, y2;
-  char some_explosions = 0;
-  char some_movement = 0;
+  uint8_t x, y, y2;
+  uint8_t some_explosions = 0;
+  uint8_t some_movement = 0;
 
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
@@ -762,7 +771,7 @@ shuffle_explosions (void)
       some_explosions = some_movement = 0;
       for (y = 0; y < 9; y++)
         {
-          char use_y = 8 - y;
+          uint8_t use_y = 8 - y;
           for (x = 0; x < 9; x++)
             {
               if (playfield[use_y][x] == EMPTY_TILE)
@@ -793,24 +802,24 @@ shuffle_explosions (void)
 }
 
 static void
-selected_state (char selected)
+selected_state (uint8_t selected)
 {
   if (selected)
     {
-      for (char c = 0; c < 8; c++)
+      for (uint8_t c = 0; c < 8; c++)
         setpalette (c + 8, 8);
     }
   else
     {
-      for (char c = 0; c < 8; c++)
+      for (uint8_t c = 0; c < 8; c++)
         setpalette (c + 8, 7);
     }
 }
 
 static void
-make_special (char base, char *x)
+make_special (uint8_t base, uint8_t *x)
 {
-  char candy = *x;
+  uint8_t candy = *x;
   candy &= 127;
   if (candy < 6)
     candy += base;
@@ -818,7 +827,7 @@ make_special (char base, char *x)
 }
 
 static void
-special_candy (char *position, char h_score, char v_score)
+special_candy (uint8_t *position, uint8_t h_score, uint8_t v_score)
 {
   if (h_score >= 5 || v_score >= 5)
     *position = COLOURBOMB_TILE;
@@ -830,11 +839,11 @@ special_candy (char *position, char h_score, char v_score)
     make_special (V_TILES, position);
 }
 
-static char
-permitted_swap (char oldx, char oldy, char newx, char newy)
+static uint8_t
+permitted_swap (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
 {
-  char lhs = playfield[oldy][oldx];
-  char rhs = playfield[newy][newx];
+  uint8_t lhs = playfield[oldy][oldx];
+  uint8_t rhs = playfield[newy][newx];
 
   /* Swapping a colour with itself isn't a "move".  */
   if (lhs < FIRST_NONCOLOUR
@@ -859,13 +868,13 @@ permitted_swap (char oldx, char oldy, char newx, char newy)
   return 1;
 }
 
-static char
-successful_move (char oldx, char oldy, char newx, char newy)
+static uint8_t
+successful_move (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
 {
-  char selected_tile;
-  char h_score = 0, v_score = 0, success = 0;
-  char lhs = playfield[oldy][oldx];
-  char rhs = playfield[newy][newx];
+  uint8_t selected_tile;
+  uint8_t h_score = 0, v_score = 0, success = 0;
+  uint8_t lhs = playfield[oldy][oldx];
+  uint8_t rhs = playfield[newy][newx];
 
   if (!permitted_swap (oldx, oldy, newx, newy))
     return 0;
@@ -900,10 +909,10 @@ successful_move (char oldx, char oldy, char newx, char newy)
   return 0;
 }
 
-static char
-move_is_possible (char oldx, char oldy, char newx, char newy)
+static uint8_t
+move_is_possible (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
 {
-  char success = 0;
+  uint8_t success = 0;
   
   if (!permitted_swap (oldx, oldy, newx, newy))
     return 0;
@@ -924,13 +933,13 @@ move_is_possible (char oldx, char oldy, char newx, char newy)
   return success;
 }
 
-static void big_text (char *, char *, char, char);
+static void big_text (uint8_t *, char *, uint8_t, uint8_t);
 
-static char
+static uint8_t
 reshuffle (void)
 {
-  char i, j;
-  char *cp = &playfield[0][0];
+  uint8_t i, j;
+  uint8_t *cp = &playfield[0][0];
 
   selected_state (0);
   big_text (&screenbase[10*ROWLENGTH+CENTRE (9)], "Reshuffle", 0xff, 0xc0);
@@ -939,7 +948,7 @@ reshuffle (void)
     {
       if (cp[i] < FIRST_NONCOLOUR)
         {
-          char range = 81 - (i + 1), replacement, tmp, any_to_swap = 0;
+          uint8_t range = 81 - (i + 1), replacement, tmp, any_to_swap = 0;
           
           for (j = i + 1; i < 81; j++)
             if (cp[j] >= FIRST_NONCOLOUR)
@@ -966,10 +975,10 @@ reshuffle (void)
   big_text (&screenbase[10*ROWLENGTH+CENTRE (9)], "Reshuffle", 0x3f, 0x0);
 }
 
-static char
+static uint8_t
 reshuffle_needed (void)
 {
-  char x, y;
+  uint8_t x, y;
 
   for (x = 0; x < 8; x++)
     for (y = 0; y < 8; y++)
@@ -984,11 +993,11 @@ reshuffle_needed (void)
   return 1;
 }
 
-static char
+static uint8_t
 retrigger (void)
 {
-  char x, y;
-  char success = 0;
+  uint8_t x, y;
+  uint8_t success = 0;
   
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
@@ -1012,17 +1021,17 @@ do_explosions (void)
 }
 
 static void
-write_number (char *at, unsigned long number, char digits)
+write_number (uint8_t *at, unsigned long number, uint8_t digits)
 {
   unsigned long maximum = 1;
-  char i;
+  uint8_t i;
   
   for (i = 1; i < digits; i++)
     maximum *= 10;
 
   for (i = 0; i < digits; i++)
     {
-      char *digit = tiles[DIGITS_TEXT];
+      uint8_t *digit = tiles[DIGITS_TEXT];
       digit += ((number / maximum) % 10) * 16;
       memcpy (at, digit, 16);
       at += 16;
@@ -1031,21 +1040,21 @@ write_number (char *at, unsigned long number, char digits)
 }
 
 static void
-big_text (char *chartop, char *str, char andval, char orval)
+big_text (uint8_t *chartop, char *str, uint8_t andval, uint8_t orval)
 {
-  static char exploded[9];
-  char x, y, c;
+  static uint8_t exploded[9] = { 1 };
+  uint8_t x, y, c;
 
   while (*str)
     {
       char thechar = *str++;
-      char *charscan = chartop;
+      uint8_t *charscan = chartop;
       exploded[0] = thechar;
       osword (10, exploded);
       for (y = 0; y < 8; y++)
         {
-          char row = exploded[y + 1];
-          char *screenrow = charscan;
+          uint8_t row = exploded[y + 1];
+          uint8_t *screenrow = charscan;
           for (x = 0; x < 8; x++)
             {
               if (row & 0x80)
@@ -1073,13 +1082,13 @@ refresh_status (void)
 static void
 count_jelly (void)
 {
-  char cnt = 0;
-  char x, y;
+  uint8_t cnt = 0;
+  uint8_t x, y;
   
   for (y = 0; y < 9; y++)
     for (x = 0; x < 9; x++)
       {
-        char bg_tile = background[y][x] & BG_MASK;
+        uint8_t bg_tile = background[y][x] & BG_MASK;
         if (bg_tile == 1 || bg_tile == 2)
           cnt++;
       }
@@ -1087,16 +1096,75 @@ count_jelly (void)
   jellies = cnt;
 }
 
+static char *magic_words[] =
+  {
+    "Sugar", "Smash",
+    "Fruity", "Yumyums"
+  };    
+
+static void
+write_exciting_logo (uint8_t wordno)
+{
+  char *word1 = magic_words[wordno];
+  char *word2 = magic_words[wordno + 1];
+  uint8_t len1 = strlen (word1), len2 = strlen (word2);
+  selected_state (1);
+  big_text (&screenbase[5 * ROWLENGTH + CENTRE (len1)], word1, 0xff, 0xc0);
+  big_text (&screenbase[15 * ROWLENGTH + CENTRE (len2)], word2, 0xff, 0xc0);
+  pause (40000);
+  big_text (&screenbase[5 * ROWLENGTH + CENTRE (len1)], word1, 0x3f, 0x0);
+  big_text (&screenbase[15 * ROWLENGTH + CENTRE (len2)], word2, 0x3f, 0x0);
+}
+
 //static unsigned rowmultab[32];
 
-static char
-play_level (void)
+static void
+clear (void)
 {
-  unsigned char x, y;
-  unsigned char oldcx, oldcy, cursx = 0, cursy = 0;
+  unsigned ctr, offset;
+  for (offset = 0; offset < 8; offset++)
+    for (ctr = 0; ctr < ROWLENGTH * 27; ctr += 8)
+      screenbase[ctr+offset] &= 0xc0;
+}
+
+/* squidge:
+    0, -15, 7, 15
+    1, 2, 200, 15
+*/
+
+static void
+sound (int channel, int amplitude, int pitch, int duration)
+{
+  static uint8_t params[8];
+  params[0] = channel & 255;
+  params[1] = (channel >> 8) & 255;
+  params[2] = amplitude & 255;
+  params[3] = (amplitude >> 8) & 255;
+  params[4] = pitch & 255;
+  params[5] = (pitch >> 8) & 255;
+  params[6] = duration & 255;
+  params[7] = (duration >> 8) & 255;
+  osword (7, params);
+}
+
+static void
+init_level (uint8_t levelno)
+{
+  char *levdata = tiles[LEVEL1_PTR + levelno - 1];
+  movesleft = levdata[0];
+  memcpy (background, &levdata[1], 9 * 9);
+}
+
+static uint8_t
+play_level (uint8_t levelno)
+{
+  uint8_t x, y;
+  uint8_t oldcx, oldcy, cursx = 0, cursy = 0;
   signed char row, rep;
-  unsigned char selected = 0;
-  char i;
+  uint8_t selected = 0;
+  uint8_t i;
+
+  init_level (levelno);
 
   memset (&screenbase[ROWLENGTH*27], 0x30, ROWLENGTH);
   memcpy (&screenbase[ROWLENGTH*27 + 2 * 8], tiles[MOVES_TEXT], 11 * 8);
@@ -1104,7 +1172,6 @@ play_level (void)
   memcpy (&screenbase[ROWLENGTH*27 + 39 * 8], tiles[SCORE_TEXT], 10 * 8);
 
   thescore = 0;
-  movesleft = 100;
 
   count_jelly ();
   refresh_status ();
@@ -1120,7 +1187,7 @@ play_level (void)
       for (y = 0; y < 9; y++)
         for (x = 0; x < 9; x++)
           {
-            char thistile;
+            uint8_t thistile;
             do
               {
                 if (background[y][x] & SWIRL_MASK)
@@ -1155,7 +1222,7 @@ play_level (void)
 
   while (movesleft > 0 && jellies > 0)
     {
-      char readchar;
+      uint8_t readchar;
       oldcx = cursx;
       oldcy = cursy;
 
@@ -1213,82 +1280,131 @@ play_level (void)
           ;
         }
 
-        if (oldcx != cursx || oldcy != cursy)
-          {
-            char selected_tile = playfield[oldcy][oldcx];
+      if (oldcx != cursx || oldcy != cursy)
+        {
+          uint8_t selected_tile = playfield[oldcy][oldcx];
 
-            if (selected
-                && successful_move (oldcx, oldcy, cursx, cursy))
-              {
-                char retriggers = 0;
-                show_swap (oldcx, oldcy, cursx, cursy);
+          if (selected
+              && successful_move (oldcx, oldcy, cursx, cursy))
+            {
+              uint8_t retriggers = 0;
+              uint8_t plus_sound = 70;
+              show_swap (oldcx, oldcy, cursx, cursy);
 
-                do_explosions ();
+              sound (0x11, 1, 50, 10);
 
-                while (1)
-                  {
-                    while (retrigger ())
-                      {
-                        do_explosions ();
-                        retriggers++;
-                      }
+              do_explosions ();
 
-                    if (!reshuffle_needed ())
-                      break;
+              while (1)
+                {
+                  while (retrigger ())
+                    {
+                      sound (0x11, 1, plus_sound, 10);
+                      do_explosions ();
+                      retriggers++;
+                      plus_sound += 20;
+                    }
 
-                    reshuffle ();
-                  }
+                  if (!reshuffle_needed ())
+                    break;
 
-                if (retriggers > 1)
-                  {
-                    big_text (&screenbase[5*ROWLENGTH+CENTRE(5)], "Sugar",
-                              0xff, 0xc0);
-                    big_text (&screenbase[15*ROWLENGTH+CENTRE(5)], "Smash",
-                              0xff, 0xc0);
-                    pause (40000);
-                    big_text (&screenbase[5*ROWLENGTH+CENTRE(5)], "Sugar",
-                              0x3f, 0x0);
-                    big_text (&screenbase[15*ROWLENGTH+CENTRE(5)], "Smash",
-                              0x3f, 0x0);
-                  }
+                  reshuffle ();
+                }
 
-                /* OR with 8.  */
-                //gfx_gcol (1, 8);
-                box (cursx, cursy, 0xff, 0xc0);
+              if (retriggers > 2)
+                write_exciting_logo (0);
 
-                selected = 0;
-                selected_state (selected);
+              /* OR with 8.  */
+              //gfx_gcol (1, 8);
+              box (cursx, cursy, 0xff, 0xc0);
 
-                movesleft--;
-                count_jelly ();
-                refresh_status ();
-              }
-            else
-              {
-                if (selected)
-                  {
-                    selected = 0;
-                    selected_state (selected);
-                  }
+              selected = 0;
+              selected_state (selected);
 
-                /* OR with 8.  */
-                //gfx_gcol (1, 8);
-                box (cursx, cursy, 0xff, 0xc0);
+              movesleft--;
+              count_jelly ();
+              refresh_status ();
+            }
+          else
+            {
+              if (selected)
+                {
+                  selected = 0;
+                  selected_state (selected);
+                }
 
-                /* AND with 7.  */
-                //gfx_gcol (2, 7);
-                box (oldcx, oldcy, 0x3f, 0x00);
-              }
-          }
-      }
+              /* OR with 8.  */
+              //gfx_gcol (1, 8);
+              box (cursx, cursy, 0xff, 0xc0);
+
+              /* AND with 7.  */
+              //gfx_gcol (2, 7);
+              box (oldcx, oldcy, 0x3f, 0x00);
+            }
+        }
+    }
+
+  box (cursx, cursy, 0x3f, 0x0);
+
   return movesleft > 0;
+}
+
+typedef struct
+{
+  uint8_t num;
+  uint8_t steplen;
+  int8_t pitch_delta_1;
+  int8_t pitch_delta_2;
+  int8_t pitch_delta_3;
+  uint8_t steps_1;
+  uint8_t steps_2;
+  uint8_t steps_3;
+  int8_t amp_delta_attack;
+  int8_t amp_delta_decay;
+  int8_t amp_delta_sustain;
+  int8_t amp_delta_release;
+  uint8_t attack_target;
+  uint8_t decay_target;
+} envelope;
+
+static envelope env1 =
+{
+  1,
+  5 | 128,
+  12, 0, 0,
+  9, 0, 0,
+  0, -5, 0, -10,
+  126, 80
+};
+
+static envelope env2 =
+{
+  2,
+  3,
+  -1, 40, 0,
+  10, 20, 0,
+  0, 0, 0, 0,
+  0, 0
+};
+
+static void
+config_envelopes (void)
+{
+  osword (8, &env1);
+  osword (8, &env2);
 }
 
 int main (void)
 {
   int win;
+  uint8_t current_level = 1;
 
-#ifndef TILES_LINKED_IN
+  config_envelopes ();
+
+#ifdef ROM
+  //osfile_load ("tiles\r", (void*) 0xe00);
+  //setmode (2);
+#elif !defined(TILES_LINKED_IN)
   select_sram (4);
   osfile_load ("tiles\r", (void*) 0x5800);
   memcpy ((void*) 0x8000, (void*) 0x5800, 10240);
@@ -1327,13 +1443,23 @@ int main (void)
 
   do
     {
-      win = play_level ();
+      win = play_level (current_level);
 
       if (win)
-        big_text (&screenbase[10*ROWLENGTH+CENTRE (4)], "WIN!", 0x0, 0xc0);
+        {
+          write_exciting_logo (0);
+          write_exciting_logo (2);
+          selected_state (0);
+          big_text (&screenbase[10*ROWLENGTH+CENTRE (4)], "WIN!", 0x0, 0xc0);
+
+          /* You shall be stuck on the final level forever.  */
+          if (tiles[LEVEL1_PTR + current_level] != 0)
+            current_level++;
+        }
       else
         big_text (&screenbase[10*ROWLENGTH+CENTRE (6)], "Failed", 0x0, 0xc0);
 
+      clear ();
       osrdch ();
     }
   while (1);
