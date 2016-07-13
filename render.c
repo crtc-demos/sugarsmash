@@ -720,7 +720,7 @@ show_explosions (void)
           {
             if (!made_jelly_sound && (background[y][x] & BG_MASK) == 1)
               {
-                sound (0x13, 3, 114 + (rand () & 15), 10);
+                sound (0x13, 3, 130 - jellies, 10);
                 made_jelly_sound = 1;
               }
 
