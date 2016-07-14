@@ -527,6 +527,7 @@ stripes_match (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy, uint8_t f
             trigger (i, newy, rhs);
             trigger (newx, i, rhs);
           }
+      thescore += 3;
       return 1;
     }
 
@@ -546,6 +547,8 @@ colourbomb_match (uint8_t *lhsp, uint8_t *rhsp, uint8_t fix_move)
           explode_a_colour (rhs);
         }
 
+      thescore += 3;
+
       return 1;
     }
   else if (rhs == COLOURBOMB_TILE)
@@ -555,6 +558,8 @@ colourbomb_match (uint8_t *lhsp, uint8_t *rhsp, uint8_t fix_move)
           *rhsp |= 128;
           explode_a_colour (lhs);
         }
+
+      thescore += 3;
 
       return 1;
     }
@@ -570,6 +575,7 @@ trigger (uint8_t x, uint8_t y, uint8_t eq)
   uint8_t trigger_char = playfield[y][x] & 127, i, j;
 
   playfield[y][x] |= 128;
+  thescore++;
 
   if (trigger_char == EMPTY_TILE || trigger_char == SWIRL_TILE)
     return;
@@ -750,6 +756,7 @@ deswirl (uint8_t x, uint8_t y)
   background[y][x] &= ~SWIRL_MASK;
   playfield[y][x] = EMPTY_TILE;
   redraw_tile (x, y);
+  thescore += 10;
 }
 
 static void
@@ -770,6 +777,7 @@ shuffle_explosions (void)
               {
                 background[y][x] &= ~CAGE_MASK;
                 redraw_tile (x, y);
+                thescore += 20;
               }
 
             if (x > 0 && (background[y][x - 1] & SWIRL_MASK))
@@ -783,7 +791,10 @@ shuffle_explosions (void)
 
             // Remove jelly (like a boss).
             if (background[y][x] > 0 && background[y][x] <= 2)
-              background[y][x]--;
+              {
+                thescore += 10;
+                background[y][x]--;
+              }
           }
       }
 
@@ -847,17 +858,33 @@ make_special (uint8_t base, uint8_t *x)
   *x = candy;
 }
 
-static void
+static char
 special_candy (uint8_t *position, uint8_t h_score, uint8_t v_score)
 {
   if (h_score >= 5 || v_score >= 5)
-    *position = COLOURBOMB_TILE;
+    {
+      thescore += 20;
+      *position = COLOURBOMB_TILE;
+    }
   else if (h_score >= 3 && v_score >= 3)
-    make_special (WRAP_TILES, position);
+    {
+      thescore += 20;
+      make_special (WRAP_TILES, position);
+    }
   else if (h_score >= 4)
-    make_special (H_TILES, position);
+    {
+      thescore += 10;
+      make_special (H_TILES, position);
+    }
   else if (v_score >= 4)
-    make_special (V_TILES, position);
+    {
+      thescore += 10;
+      make_special (V_TILES, position);
+    }
+  else
+    return 0;
+
+  return 1;
 }
 
 static uint8_t
@@ -912,14 +939,16 @@ successful_move (uint8_t oldx, uint8_t oldy, uint8_t newx, uint8_t newy)
   v_score = vertical_match (newx, newy, selected_tile, 1);
 
   success |= h_score >= 3 || v_score >= 3;
-  special_candy (&playfield[newy][newx], h_score, v_score);
+  if (!special_candy (&playfield[newy][newx], h_score, v_score))
+    thescore += 5;
 
   selected_tile = playfield[oldy][oldx];
   h_score = horizontal_match (oldx, oldy, selected_tile, 1);
   v_score = vertical_match (oldx, oldy, selected_tile, 1);
 
   success |= h_score >= 3 || v_score >= 3;
-  special_candy (&playfield[oldy][oldx], h_score, v_score);
+  if (!special_candy (&playfield[oldy][oldx], h_score, v_score))
+    thescore += 5;
 
   if (success)
     return 1;
@@ -1192,7 +1221,7 @@ play_level (uint8_t levelno)
   memcpy (&screenbase[ROWLENGTH*27 + 23 * 8], tiles[JELLY_TEXT], 8 * 8);
   memcpy (&screenbase[ROWLENGTH*27 + 39 * 8], tiles[SCORE_TEXT], 10 * 8);
 
-  thescore = 0;
+  //thescore = 0;
 
   count_jelly ();
   refresh_status ();
