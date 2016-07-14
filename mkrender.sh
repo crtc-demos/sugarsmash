@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 rm -f rendertest.ssd
-BBCIM=/home/jules/stuff/chunkydemo2/bbcim/bbcim
+#BBCIM=/home/jules/stuff/chunkydemo2/bbcim/bbcim
+BBCIM=/home/jules/code/chunkydemo/bbcim/bbcim
 ./tileconv candy3.gif -o tiles.s
 ca65 tiles.s -o tiles.o
 ld65 --config none.cfg -S 0xe00 tiles.o -o tiles
@@ -14,6 +15,8 @@ cp render render.inf "!boot" "!boot.inf" "tiles" "tiles.inf" tmpdisk
 
 BINSIZE=$(wc -c render | awk '{print $1}')
 echo "binary size: $BINSIZE / 16384"
+
+find . -name "*.inf" -exec ./update-inf.sh {} \;
 
 $BBCIM -new rendertest.ssd
 pushd tmpdisk
