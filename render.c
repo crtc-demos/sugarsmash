@@ -122,12 +122,15 @@ osrdch (void)
 static void
 osword (unsigned char code, void *parameters)
 {
-  unsigned char addr_lo = ((unsigned short) parameters) & 0xff;
-  unsigned char addr_hi = (((unsigned short) parameters) >> 8) & 0xff;
-  unsigned char dma, dmx, dmy;
+  register uint8_t addr_lo asm ("x") = ((unsigned short) parameters) & 0xff;
+  register uint8_t addr_hi asm ("y") = (((unsigned short) parameters) >> 8) & 0xff;
+  register uint8_t incode asm ("a") = code;
+  register uint8_t dma asm ("a");
+  register uint8_t dmx asm ("x");
+  register uint8_t dmy asm ("y");
   __asm__ __volatile__ ("jsr $fff1"
-			: "=Aq" (dma), "=xq" (dmx), "=yq" (dmy)
-			: "Aq" (code), "xq" (addr_lo), "yq" (addr_hi)
+			: "=hq" (dma), "=hq" (dmx), "=hq" (dmy)
+			: "hq" (incode), "hq" (addr_lo), "hq" (addr_hi)
 			: "memory");
 }
 
